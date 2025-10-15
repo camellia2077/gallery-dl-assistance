@@ -24,11 +24,25 @@ class BilibiliAPI:
         if self.cookie_file:
             command.extend(['--cookies', self.cookie_file])
         try:
-            # 运行子进程，捕获输出，并使用 utf-8 编码
-            result = subprocess.run(command, check=True, capture_output=True, text=True, encoding='utf-8')
-            return json.loads(result.stdout)
+            # 运行子进程，但捕获原始的二进制输出，而不是让Python自动解码
+            result = subprocess.run(command, check=True, capture_output=True)
+            
+            # 尝试使用 utf-8 解码，这是最标准的情况
+            try:
+                output_text = result.stdout.decode('utf-8')
+            except UnicodeDecodeError:
+                # 如果 utf-8 失败，则尝试使用 gbk 解码，这通常是中文Windows环境的编码
+                # 最后的 errors='ignore' 是为了防止极少数 gbk 也无法处理的特殊字符
+                output_text = result.stdout.decode('gbk', errors='ignore')
+
+            return json.loads(output_text)
         except subprocess.CalledProcessError as e:
-            print(f"  - 错误: gallery-dl 执行失败，URL: {url}。错误输出: {e.stderr.strip()}")
+            # 同样，在出错时也要智能地解码错误信息
+            try:
+                stderr_text = e.stderr.decode('utf-8').strip()
+            except UnicodeDecodeError:
+                stderr_text = e.stderr.decode('gbk', errors='ignore').strip()
+            print(f"  - 错误: gallery-dl 执行失败，URL: {url}。错误输出: {stderr_text}")
         except json.JSONDecodeError:
             print(f"  - 错误: 解析来自 gallery-dl 的 JSON 数据失败，URL: {url}。")
         except Exception as e:

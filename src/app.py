@@ -1,11 +1,46 @@
-# app.py
+# src/app.py
 
 import os
 import sys
 import time
 import datetime
 import json
+import re  # 导入正则表达式模块
 from dataclasses import dataclass, asdict
+
+class Tee:
+    """
+    一个辅助类，用于将输出（如 sys.stdout）同时重定向到控制台和文件。
+    【新增】此类现在能够移除ANSI颜色代码，确保日志文件是纯文本。
+    """
+    def __init__(self, *files):
+        self.files = files
+        # 用于匹配并移除ANSI颜色代码的正则表达式
+        self.ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+
+    def write(self, obj):
+        # 为写入文件准备一份去除了颜色代码的纯文本版本
+        plain_text = self.ansi_escape.sub('', obj)
+        
+        for f in self.files:
+            try:
+                # 判断输出流是否为终端（控制台）
+                if hasattr(f, 'isatty') and f.isatty():
+                    # 如果是控制台，写入原始带颜色的文本
+                    f.write(obj)
+                else:
+                    # 如果是文件，写入处理过的纯文本
+                    f.write(plain_text)
+                f.flush()
+            except Exception:
+                pass
+
+    def flush(self):
+        for f in self.files:
+            try:
+                f.flush()
+            except Exception:
+                pass
 
 @dataclass
 class LogEntry:
@@ -30,8 +65,11 @@ class Application:
         self.config = config
         os.makedirs(self.config.OUTPUT_DIR_PATH, exist_ok=True)
         self.api = BilibiliAPI(self.config.COOKIE_FILE_PATH)
-        # 恢复：不再传递数据库实例
         self.processor = PostProcessorFacade(self.config.OUTPUT_DIR_PATH, self.api, self.config)
+        
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+        self.log_dir = os.path.join(project_root, 'log')
+        os.makedirs(self.log_dir, exist_ok=True)
 
     def _write_log(self, log_file_path: str, data: dict):
         records = []
@@ -53,16 +91,27 @@ class Application:
         """
         启动下载器的主入口点。
         """
-        print(f"正在从 'config.py' 的 USERS_ID 列表读取用户 ID...")
-        user_ids = self.config.USERS_ID
+        timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        console_log_path = os.path.join(self.log_dir, f"run_log_{timestamp}.log")
         
-        if not user_ids:
-            print(f"错误：配置文件中的 USERS_ID 列表为空。")
-            return
-
-        log_file_path = os.path.join(self.config.OUTPUT_DIR_PATH, "processing_time_log.json")
+        original_stdout = sys.stdout
+        log_file = open(console_log_path, 'w', encoding='utf-8')
+        
+        sys.stdout = Tee(original_stdout, log_file)
+        
+        summary_log_path = os.path.join(self.log_dir, "processing_time_log.json")
 
         try:
+            print(f"程序启动于: {timestamp}")
+            print("-" * 40)
+            
+            print(f"正在从 'config.py' 的 USERS_ID 列表读取用户 ID...")
+            user_ids = self.config.USERS_ID
+            
+            if not user_ids:
+                print(f"错误：配置文件中的 USERS_ID 列表为空。")
+                return
+
             for user_id in user_ids:
                 start_time = time.perf_counter()
 
@@ -98,9 +147,14 @@ class Application:
                     failed_images=stats['failed_images']
                 )
 
-                self._write_log(log_file_path, asdict(log_entry_obj))
+                self._write_log(summary_log_path, asdict(log_entry_obj))
+
+            print(f"\n所有任务已完成！")
+            print(f"详细运行日志已保存到: {os.path.abspath(console_log_path)}")
+            print(f"处理摘要日志已保存到: {os.path.abspath(summary_log_path)}")
 
         except KeyboardInterrupt:
             print("\n\n程序被用户中断。正在退出...")
-        
-        print(f"\n所有任务已完成！日志已保存到: {log_file_path}")
+        finally:
+            sys.stdout = original_stdout
+            log_file.close()

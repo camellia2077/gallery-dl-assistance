@@ -1,2 +1,4 @@
 _pycache_/
 *.pyc
+*.log
+*.json

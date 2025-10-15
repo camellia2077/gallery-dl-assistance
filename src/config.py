@@ -7,6 +7,9 @@ class Config:
     """
     # 【修改】要下载的用户数字ID列表。
     USERS_ID = [
+        27534330,#崩坏3第一偶像爱酱",
+        1340190821,#崩坏星穹铁道
+        1636034895, #绝区零
         35117822,           # 好喜欢蜜桃四季春
         10982073,           # 明前奶粉罐
         560647,             # 坂坂白
@@ -40,6 +43,9 @@ class Config:
     # 当API无法获取用户名时，程序会优先使用这里的名称。
     # 键必须是字符串形式的数字ID，值是您希望使用的文件夹名。
     USER_ID_TO_NAME_MAP = {
+        "1340190821":"崩坏星穹铁道",
+        "27534330":"崩坏3第一偶像爱酱",
+        "1636034895":"绝区零",
         "560647": "坂坂白",
         "2075682": "Kitaro绮太郎",
         "31968078": "粽子淞",
@@ -70,8 +76,8 @@ class Config:
     # 将会跳过该用户的所有剩余动态，从而大大提高后续运行的效率。
     INCREMENTAL_DOWNLOAD = False
     
-    # Cookie 文件路径，用于 gallery-dl 进行需要登录的访问
-    COOKIE_FILE_PATH = "C:/Base1/bili/gallery-dl/space.bilibili.com_cookies.txt"
+    # Cookie 文件路径，用于 gallery-dl 进行需要登录的访问 space.bilibili.com_cookies.txt
+    COOKIE_FILE_PATH = r"C:\Base1.5-美女图片\bili\gallery-dl"
     
     # 图片和元数据保存的基础输出目录
-    OUTPUT_DIR_PATH = "C:/Base1/bili/gallery-dl/bilibili_images"
+    OUTPUT_DIR_PATH = r"C:\Base1.5-美女图片\bili\gallery-dl\bilibili_images"
