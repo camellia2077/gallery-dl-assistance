@@ -1,66 +1,98 @@
-# api.py
+# src/api.py
 
 import subprocess
 import json
-from typing import List, Dict, Any, Optional
+import requests
+import http.cookiejar
+from typing import List, Dict, Any, Optional, Iterator
 
 class BilibiliAPI:
-    """一个用于通过 gallery-dl 工具与 Bilibili 交互的封装器。"""
+    """一个用于通过 gallery-dl 或直接API与 Bilibili 交互的封装器。"""
     
     def __init__(self, cookie_file: Optional[str]):
-        """
-        初始化 API 封装器。
-        :param cookie_file: 指向 cookies.txt 文件的路径，可以为 None。
-        """
+        """初始化 API 封装器。"""
         self.cookie_file = cookie_file
+        self.session = requests.Session()
+        self.session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+            "Referer": "https://www.bilibili.com/"
+        })
+        if self.cookie_file:
+            self._load_cookies()
+
+    def _load_cookies(self):
+        """从 Netscape 格式的 cookie 文件加载 cookie 到 session 中。"""
+        try:
+            jar = http.cookiejar.MozillaCookieJar(self.cookie_file)
+            jar.load()
+            self.session.cookies.update(jar)
+        except Exception as e:
+            print(f"  - 警告：加载 cookie 文件失败: {e}")
 
     def _run_command(self, url: str) -> Optional[List[Dict[str, Any]]]:
-        """
-        一个集中的辅助函数，用于运行 gallery-dl 并解析其 JSON 输出。
-        :param url: 要传递给 gallery-dl 的 URL。
-        :return: 解析后的 JSON 数据，如果出错则返回 None。
-        """
+        """通过 gallery-dl 运行命令并解析其 JSON 输出。"""
         command = ['gallery-dl', '-j', url]
         if self.cookie_file:
             command.extend(['--cookies', self.cookie_file])
         try:
-            # 运行子进程，但捕获原始的二进制输出，而不是让Python自动解码
             result = subprocess.run(command, check=True, capture_output=True)
-            
-            # 尝试使用 utf-8 解码，这是最标准的情况
             try:
                 output_text = result.stdout.decode('utf-8')
             except UnicodeDecodeError:
-                # 如果 utf-8 失败，则尝试使用 gbk 解码，这通常是中文Windows环境的编码
-                # 最后的 errors='ignore' 是为了防止极少数 gbk 也无法处理的特殊字符
                 output_text = result.stdout.decode('gbk', errors='ignore')
-
             return json.loads(output_text)
-        except subprocess.CalledProcessError as e:
-            # 同样，在出错时也要智能地解码错误信息
-            try:
-                stderr_text = e.stderr.decode('utf-8').strip()
-            except UnicodeDecodeError:
-                stderr_text = e.stderr.decode('gbk', errors='ignore').strip()
-            print(f"  - 错误: gallery-dl 执行失败，URL: {url}。错误输出: {stderr_text}")
-        except json.JSONDecodeError:
-            print(f"  - 错误: 解析来自 gallery-dl 的 JSON 数据失败，URL: {url}。")
-        except Exception as e:
-            print(f"  - 错误: 运行 gallery-dl 时发生未知错误: {e}")
+        except (subprocess.CalledProcessError, json.JSONDecodeError, Exception) as e:
+            print(f"  - 错误: gallery-dl 执行或解析失败，URL: {url}。错误: {e}")
         return None
     
     def get_post_metadata(self, post_url: str) -> Optional[List[Dict[str, Any]]]:
-        """
-        获取单个动态的详细元数据。
-        :param post_url: 单个动态的 URL。
-        :return: 包含元数据信息的列表，或在失败时返回 None。
-        """
+        """获取单个动态的详细元数据。"""
         return self._run_command(post_url)
 
     def get_initial_metadata(self, user_url: str) -> Optional[List[Dict[str, Any]]]:
-        """
-        获取用户主页的初始元数据转储，这通常包含了所有动态的 URL 列表。
-        :param user_url: 用户主页的 URL。
-        :return: 包含元数据信息的列表，或在失败时返回 None。
-        """
+        """【GET_ALL模式】获取用户所有动态的元数据。"""
         return self._run_command(user_url)
+
+    def get_post_urls_iterative(self, user_id: int) -> Iterator[str]:
+        """
+        【ITERATIVE模式】
+        通过直接请求B站API，逐页获取并实时产出(yield)单个动态的URL。
+        这是一个生成器，实现了边获取边处理。
+        """
+        api_url = "https://api.bilibili.com/x/polymer/web-dynamic/v1/opus/feed/space"
+        params = {"host_mid": str(user_id), "offset": ""}
+        
+        while True:
+            try:
+                response = self.session.get(api_url, params=params, timeout=20)
+                response.raise_for_status()
+                data = response.json()
+
+                if data.get("code") != 0:
+                    print(f"  - API错误: {data.get('message', '未知错误')}")
+                    break
+                
+                items = data.get("data", {}).get("items", [])
+                if not items:
+                    break
+
+                for item in items:
+                    if item.get("opus_id"):
+                        yield f"https://www.bilibili.com/opus/{item['opus_id']}"
+                
+                if not data.get("data", {}).get("has_more"):
+                    break
+                
+                # 【修改点】更新 offset 以便进行翻页
+                # 使用 'opus_id' 而不是 'opus_id_str'
+                params["offset"] = items[-1].get("opus_id", "")
+                if not params["offset"]:
+                    print("  - 错误：无法获取下一页的 offset，停止获取。")
+                    break
+
+            except requests.exceptions.RequestException as e:
+                print(f"  - 网络错误: {e}")
+                break
+            except json.JSONDecodeError:
+                print(f"  - API响应解析失败。")
+                break

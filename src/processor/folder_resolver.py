@@ -1,4 +1,4 @@
-# folder_resolver.py
+# src/processor/folder_resolver.py
 
 import os
 import re
@@ -23,6 +23,9 @@ class FolderNameResolver:
         """扫描输出目录，通过元数据反向查找与user_id匹配的文件夹名。"""
         print("  - 警告：正在扫描现有文件夹以匹配用户ID... 这可能需要一些时间。")
         try:
+            # 确保基础目录存在，避免在扫描时出错
+            if not os.path.isdir(self.base_output_dir):
+                return None
             for folder_name in os.listdir(self.base_output_dir):
                 user_folder = os.path.join(self.base_output_dir, folder_name)
                 if not os.path.isdir(user_folder):
@@ -36,17 +39,33 @@ class FolderNameResolver:
                     try:
                         with open(os.path.join(meta_dir, meta_file), 'r', encoding='utf-8') as f:
                             data = json.load(f)
-                        uid_from_meta = data[0][-1].get('detail', {}).get('modules', {}).get('module_author', {}).get('mid')
-                        if uid_from_meta and uid_from_meta == user_id:
-                            print(f"  - 匹配成功！在文件夹 '{folder_name}' 中找到了用户ID {user_id}。")
-                            return folder_name
-                    except (json.JSONDecodeError, IndexError, KeyError):
+                        # 健壮性检查，确保数据结构符合预期
+                        if data and isinstance(data, list) and len(data[0]) > 1 and isinstance(data[0][-1], dict):
+                           uid_from_meta = data[0][-1].get('detail', {}).get('modules', {}).get('module_author', {}).get('mid')
+                           if uid_from_meta and uid_from_meta == user_id:
+                               print(f"  - 匹配成功！在文件夹 '{folder_name}' 中找到了用户ID {user_id}。")
+                               return folder_name
+                    except (json.JSONDecodeError, IndexError, KeyError, TypeError):
                         continue
         except Exception as e:
             print(f"  - 扫描文件夹时出错: {e}")
         return None
 
-    def determine_folder_name(self, user_id: int, user_page_data: Optional[List[Dict]], post_urls: List[str]) -> str:
+    def determine_folder_name_pre_scan(self, user_id: int) -> Optional[str]:
+        """
+        一个轻量级的方法，仅通过Config映射和本地扫描来尝试确定文件夹名，
+        不进行任何API调用。用于在迭代模式下提前确定文件夹以重试下载。
+        """
+        user_id_str = str(user_id)
+        if user_id_str in self.config.USER_ID_TO_NAME_MAP:
+            mapped_name = self.config.USER_ID_TO_NAME_MAP[user_id_str]
+            # 这里不需要打印，因为这个方法应该尽可能“安静”
+            return self._sanitize_filename(mapped_name)
+
+        # 仅当无法从Config映射中找到时才扫描
+        return self._scan_for_existing_folder(user_id)
+
+    def determine_folder_name(self, user_id: int, user_page_data: Optional[List[Dict]], post_urls: List[str], first_post_meta: Optional[List[Dict]] = None) -> str:
         """
         通过多级回退机制确定文件夹名称。
         最高优先级: Config映射 -> API获取 -> 扫描本地文件夹 -> 数字ID
@@ -59,14 +78,28 @@ class FolderNameResolver:
 
         print("  - Config文件中无映射，尝试从API获取用户名...")
         username = None
+        
+        # 优先从 user_page_data (GET_ALL模式)
         if user_page_data and len(user_page_data) > 0 and len(user_page_data[0]) > 2:
             username = user_page_data[0][-1].get('username')
         
+        # 其次从 first_post_meta (ITERATIVE模式)
+        if not username and first_post_meta:
+            try:
+                first_post_detail = first_post_meta[0][-1]
+                username = first_post_detail.get('username') or first_post_detail.get('detail', {}).get('modules', {}).get('module_author', {}).get('name')
+            except (IndexError, KeyError, TypeError):
+                pass # 静默处理错误，允许继续回退
+
+        # 最后，如果都没有，再通过 post_urls 发起新请求
         if not username and post_urls:
             detailed_metadata = self.api.get_post_metadata(post_urls[0])
             if detailed_metadata:
-                first_post_detail = detailed_metadata[0][-1]
-                username = first_post_detail.get('username') or first_post_detail.get('detail', {}).get('modules', {}).get('module_author', {}).get('name')
+                try:
+                    first_post_detail = detailed_metadata[0][-1]
+                    username = first_post_detail.get('username') or first_post_detail.get('detail', {}).get('modules', {}).get('module_author', {}).get('name')
+                except (IndexError, KeyError, TypeError):
+                    pass
 
         if username:
             print(f"  - 已通过API获取用户名: {username}")
