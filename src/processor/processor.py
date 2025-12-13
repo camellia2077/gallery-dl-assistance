@@ -1,33 +1,38 @@
 # src/processor/processor.py
 
-from typing import Dict
 from api import BilibiliAPI
 from config import Config
-from .folder_resolver import FolderNameResolver
-from .content_extractor import ContentExtractor
-from .downloader import Downloader
-from .metadata_saver import MetadataSaver
+from services.content_extractor import ContentExtractor
+from services.downloader import Downloader
+from services.folder_resolver import FolderNameResolver
+from services.metadata_saver import MetadataSaver
 from .post_handler import PostHandler
 from .user_processor import UserProcessor
 
 class PostProcessorFacade:
     """
-    一个简单的外观类，用于封装和协调所有子系统。
-    它负责创建所有对象，并提供一个单一的入口点。
+    外观模式 (Facade Pattern)
+    负责初始化所有必要的服务和处理器，并将它们组装在一起。
+    对外提供统一的 process_user 接口。
     """
-    
-    def __init__(self, base_output_dir: str, api: BilibiliAPI, config: Config):
-        downloader = Downloader()
-        extractor = ContentExtractor()
-        saver = MetadataSaver()
-        resolver = FolderNameResolver(base_output_dir, api, config)
-        
-        post_handler = PostHandler(api, config, extractor, downloader, saver)
-        # 【修改】将 config 实例传递给 UserProcessor
-        self.user_processor = UserProcessor(api, config, resolver, saver, post_handler)
 
-    def process_user(self, user_id: int, user_url: str) -> Dict:
+    def __init__(self, base_output_dir: str, api: BilibiliAPI, config: Config):
+        # 1. 初始化基础服务
+        self.resolver = FolderNameResolver(base_output_dir, api, config)
+        self.saver = MetadataSaver()
+        self.downloader = Downloader()
+        self.extractor = ContentExtractor()
+
+        # 2. 初始化核心处理器
+        # PostHandler 负责处理单个动态
+        self.post_handler = PostHandler(api, config, self.extractor, self.downloader, self.saver)
+        
+        # UserProcessor 负责处理用户级逻辑 (遍历动态列表)
+        self.user_processor = UserProcessor(api, config, self.resolver, self.saver, self.post_handler)
+
+    def process_user(self, user_id: int, user_url: str) -> dict:
         """
-        启动处理单个用户的公共入口点。
+        处理单个用户的所有流程。
+        直接委托给 UserProcessor 执行。
         """
         return self.user_processor.process(user_id, user_url)

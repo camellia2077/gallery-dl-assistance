@@ -1,75 +1,101 @@
 # src/config.py
 
+import os
+import tomllib
+from typing import Dict, Any
+
 class Config:
     """
-    一个专门用于保存所有应用程序配置的类。
-    这样做的好处是，所有可调整的路径和参数都集中在一个地方，方便修改。
+    应用程序配置类。
+    从项目根目录的 'config.toml' 文件中加载配置，并进行完整性验证。
     """
-    # 【新增】下载模式选择
-    # 'GET_ALL': 传统模式，先获取一个用户的所有动态URL，再一次性处理。启动时等待较长，但总览性好。
-    # 'ITERATIVE': 迭代模式，边获取边处理，几乎没有启动等待时间，对动态非常多的用户体验更佳。
-    DOWNLOAD_MODE = 'ITERATIVE'
+    def __init__(self):
+        # 1. 自动定位 config.toml 文件
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(current_dir)
+        config_path = os.path.join(project_root, 'config.toml')
 
-    # 要下载的用户数字ID列表。
-    USERS_ID = [
-        # 27534330,  # 崩坏3第一偶像爱酱
-        1340190821, # 崩坏星穹铁道
-        1636034895, # 绝区零
-        '''
-        35117822,   # 好喜欢蜜桃四季春
-        10982073,   # 明前奶粉罐
-        560647,     # 坂坂白
-        2075682,    # Kitaro绮太郎
-        31968078,   # 粽子淞
-        4096581,    # 病院坂saki
-        305956876,  # 腥味猫罐
-        3461567555307880,   # 羲拉C3C
-        555683603,  # 玛丽兰想当玛丽苏
-        3546937055775240,  # Yasal_170
-        3546938211305491,  # beatberry314
-        356010767,  # 走路摇ZLY
-        836885,     # 清和Alicia
-        21876627,   # -谢安然-
-        498099165,  # 一颗小兔娘
-        210752,     # 真栗
-        100201761,  # 听霜_
-        16322326,   # 丝言不吃包子
-        9293142,    # 宫本樱樱酱
-        '''
-    ]
-    
-    # 用户ID到文件夹名称的手动映射。
-    USER_ID_TO_NAME_MAP = {
-        "1340190821":"崩坏星穹铁道",
-        "27534330":"崩坏3第一偶像爱酱",
-        "1636034895":"绝区零",
-        "560647": "坂坂白",
-        "2075682": "Kitaro绮太郎",
-        "31968078": "粽子淞",
-        "4096581": "病院坂saki",
-        "35117822": "好喜欢蜜桃四季春",
-        "305956876": "腥味猫罐",
-        "10982073": "明前奶粉罐",
-        "3461567555307880": "羲拉C3C",
-        "555683603": "玛丽兰想当玛丽苏",
-        "3546937055775240":"Yasal_170",
-        "3546938211305491":"beatberry314",
-        "356010767": "走路摇ZLY",
-        "836885": "清和Alicia",
-        "21876627": "-谢安然-",
-        "498099165": "一颗小兔娘",
-        "210752": "真栗",
-        "100201761": "听霜_",
-        "16322326": "丝言不吃包子",
-        "9293142": "宫本樱樱酱"
-    }
+        # 2. 读取并解析 TOML 文件
+        if not os.path.exists(config_path):
+            raise FileNotFoundError(f"配置文件未找到，请确保 'config.toml' 位于项目根目录: {config_path}")
 
-    # 增量下载开关。如果设为 True，当程序遇到第一个已存在于本地的动态元数据时，
-    # 将会跳过该用户的所有剩余动态.
-    INCREMENTAL_DOWNLOAD = False
-    
-    # Cookie 文件路径
-    COOKIE_FILE_PATH = r"C:\Base1.5-美女图片\bili\gallery-dl\space.bilibili.com_cookies.txt"
-    
-    # 图片和元数据保存的基础输出目录
-    OUTPUT_DIR_PATH = r"C:\Base1.5-美女图片\bili\gallery-dl\bilibili_images"
+        try:
+            with open(config_path, "rb") as f:
+                data = tomllib.load(f)
+        except Exception as e:
+            raise RuntimeError(f"解析配置文件失败 (格式错误): {e}")
+
+        # 3. 验证配置数据的合法性
+        self._validate_config(data)
+
+        # 4. 将 TOML 配置映射到类属性
+        self.DOWNLOAD_MODE = data["download_mode"]
+        self.USERS_ID = data["users_id"]
+        self.INCREMENTAL_DOWNLOAD = data["incremental_download"]
+        self.COOKIE_FILE_PATH = data["cookie_file_path"]
+        self.OUTPUT_DIR_PATH = data["output_dir_path"]
+        self.USER_ID_TO_NAME_MAP = data.get("user_id_map", {})
+
+    def _validate_config(self, data: Dict[str, Any]):
+        """
+        验证配置字典的合法性。
+        检查必填字段、数据类型和有效值范围。
+        """
+        # --- 1. 检查必填字段是否存在 ---
+        required_fields = [
+            "download_mode", 
+            "users_id", 
+            "incremental_download", 
+            "cookie_file_path", 
+            "output_dir_path"
+        ]
+        for field in required_fields:
+            if field not in data:
+                raise ValueError(f"配置文件 config.toml 缺少必填字段: '{field}'")
+
+        # --- 2. 检查数据类型 ---
+        
+        # download_mode 必须是字符串
+        if not isinstance(data["download_mode"], str):
+            raise TypeError(f"配置错误: 'download_mode' 必须是字符串，实际为 {type(data['download_mode']).__name__}")
+
+        # users_id 必须是列表
+        if not isinstance(data["users_id"], list):
+            raise TypeError(f"配置错误: 'users_id' 必须是列表 (例如 [123, 456])，实际为 {type(data['users_id']).__name__}")
+
+        # users_id 中的每一项必须是整数
+        for uid in data["users_id"]:
+            if not isinstance(uid, int):
+                raise TypeError(f"配置错误: 'users_id' 列表包含非整数项: {uid} ({type(uid).__name__})")
+
+        # incremental_download 必须是布尔值
+        if not isinstance(data["incremental_download"], bool):
+            raise TypeError(f"配置错误: 'incremental_download' 必须是 true 或 false")
+
+        # 路径必须是字符串
+        if not isinstance(data["cookie_file_path"], str):
+            raise TypeError(f"配置错误: 'cookie_file_path' 必须是字符串")
+        if not isinstance(data["output_dir_path"], str):
+            raise TypeError(f"配置错误: 'output_dir_path' 必须是字符串")
+
+        # user_id_map (如果存在) 必须是字典
+        if "user_id_map" in data and not isinstance(data["user_id_map"], dict):
+            raise TypeError(f"配置错误: 'user_id_map' 必须是键值对映射 (Table)")
+
+        # --- 3. 检查值的有效性 ---
+
+        # 验证 download_mode 的值
+        valid_modes = ["ITERATIVE", "GET_ALL"]
+        if data["download_mode"] not in valid_modes:
+            raise ValueError(f"配置错误: 'download_mode' 的值无效。必须是 {valid_modes} 中的一个，实际为: '{data['download_mode']}'")
+
+        # 验证路径非空
+        if not data["cookie_file_path"].strip():
+            print("警告: 'cookie_file_path' 为空，可能导致需要登录的内容无法下载。")
+        
+        if not data["output_dir_path"].strip():
+            raise ValueError("配置错误: 'output_dir_path' (输出目录) 不能为空。")
+
+        # 验证 users_id 列表非空 (可选，视需求而定，这里仅给警告)
+        if not data["users_id"]:
+            print("警告: 'users_id' 列表为空，程序运行后将不会下载任何内容。")

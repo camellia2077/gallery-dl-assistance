@@ -1,12 +1,15 @@
 # src/processor/user_processor.py
 
 import os
+import time
+import random 
+
 from typing import Dict, List, Iterable
 from tqdm import tqdm
 from api import BilibiliAPI
 from config import Config
-from .folder_resolver import FolderNameResolver
-from .metadata_saver import MetadataSaver
+from services.folder_resolver import FolderNameResolver
+from services.metadata_saver import MetadataSaver
 from .post_handler import PostHandler
 
 class UserProcessor:
@@ -78,6 +81,8 @@ class UserProcessor:
         
         # tqdm 可以完美处理列表和生成器
         for url in tqdm(post_urls_iterable, desc="处理动态", unit=" 条", total=total_posts if total_posts > 0 else None):
+            # 【新增】在处理每条动态前，随机休息 1.5 ~ 3.5 秒
+            time.sleep(random.uniform(1.5, 3.5))
             if is_first_post:
                 # 在处理第一条动态时，获取其详细信息以确定用户名和文件夹
                 # 这部分逻辑在 post_handler.process 内部完成，但我们需要先创建文件夹
