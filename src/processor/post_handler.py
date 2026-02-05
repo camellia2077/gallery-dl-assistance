@@ -20,15 +20,28 @@ class PostHandler:
         self.downloader = downloader
         self.saver = saver
 
-    def process(self, user_name: str, post_url: str, user_folder: str) -> Tuple[bool, int, List[Dict]]:
+    def process(self, user_name: str, post_url: str, user_folder: str) -> Tuple[bool, int, int, List[Dict]]:
         """
         处理单个动态，协调提取、保存和下载任务。
-        返回一个元组: (是否继续处理下一个动态, 成功下载的图片数, 失败下载的图片信息列表)
+        【修改】返回元组扩展为: (是否继续, 成功图片数, 成功视频数, 失败列表)
+        技术实现说明:
+        B站实况视频(Live Photo)的数据结构如下：
+        - 'url': 对应静态图片 (JPG)
+        - 'live_url': 对应实况视频 (MP4) - 该字段仅在存在实况时出现
+        
+        本方法会同时检查这两个字段：
+        1. 总是下载 'url' 对应的图片。
+        2. 如果检测到 'live_url'，则额外下载对应的 MP4 文件，文件名与图片保持一致（扩展名不同）。
         """
         images_data = self.api.get_post_metadata(post_url)
+        # 注意：这里返回4个值
         if not images_data or not isinstance(images_data[0][-1], dict):
             print(f"  - 警告：未找到动态 {post_url} 的有效数据，跳过。")
-            return True, 0, []
+            return True, 0, 0, []
+
+        if images_data and len(images_data) > 0 and isinstance(images_data[0], list):
+             if isinstance(images_data[0][-1], dict):
+                 images_data[0][-1]['url'] = post_url
 
         first_image_meta = images_data[0][-1]
         id_str = first_image_meta.get('detail', {}).get('id_str')
@@ -36,7 +49,7 @@ class PostHandler:
 
         if not (id_str and pub_ts):
             print(f"  - 警告：无法从元数据中获取动态 ID 或发布时间戳，跳过。")
-            return True, 0, []
+            return True, 0, 0, []
 
         try:
             date_str = datetime.datetime.fromtimestamp(pub_ts).strftime('%Y-%m-%d')
@@ -46,40 +59,30 @@ class PostHandler:
         content_json_filename = f"{date_str}_{id_str}.json"
         content_json_filepath = os.path.join(user_folder, content_json_filename)
         
-        # ------------------ 修改后的增量检查逻辑 ------------------
-        # 如果开启了增量下载，且内容信息文件已存在
+        # 增量下载检查逻辑
         if self.config.INCREMENTAL_DOWNLOAD and os.path.exists(content_json_filepath):
-            # 即使 JSON 存在，也要检查一下是否有可能缺失的 Live Photo (实况视频)
             has_missing_live_photo = False
-            
             for idx, img_info in enumerate(images_data[1:]):
                 if isinstance(img_info, list) and len(img_info) > 0 and isinstance(img_info[-1], dict):
                     meta = img_info[-1]
                     if meta.get('live_url'):
-                        # 构建预期的视频文件名 (命名规则需与下载逻辑保持一致)
                         video_filename = f"{date_str}_{id_str}_{idx+1}.mp4"
                         video_path = os.path.join(user_folder, video_filename)
-                        
                         if not os.path.exists(video_path):
                             has_missing_live_photo = True
                             print(f"  - [增量检查] 动态 {id_str} 发现缺失的实况视频，将进行补充下载。")
                             break
             
             if not has_missing_live_photo:
-                return False, 0, []
-        # -------------------------------------------------------
+                # 均已存在，返回 0, 0
+                return False, 0, 0, []
 
-        # 在保存前检查步骤2的元数据文件是否存在
-        metadata_filename = f"{date_str}_{id_str}.json"
-        metadata_filepath = os.path.join(user_folder, 'metadata', 'step2', metadata_filename)
-        if not os.path.exists(metadata_filepath):
-            self.saver.save_step2_metadata(images_data, user_folder, date_str, pub_ts, id_str)
-        else:
-            print(f"  - 步骤2元数据 '{metadata_filename}' 已存在，跳过保存。")
-        
-        successful_downloads = 0
+        self.saver.save_step2_metadata(images_data, user_folder, date_str, pub_ts, id_str)
+
+        successful_images = 0
+        successful_videos = 0
         failed_downloads_info: List[Dict] = []
-        total_images_to_process = len(images_data) - 1
+        total_items_to_process = 0
         skipped_count = 0
 
         # 遍历每一个图片项进行下载处理
@@ -88,6 +91,7 @@ class PostHandler:
                 continue
                 
             meta_dict = image_info[-1]
+            total_items_to_process += 1
 
             # ----------------- 1. 下载图片 -----------------
             if meta_dict.get('url'):
@@ -103,19 +107,16 @@ class PostHandler:
                 
                 result = self.downloader.download_image(**download_args)
                 if result == "SUCCESS":
-                    successful_downloads += 1
+                    successful_images += 1
                 elif result == "FAILED":
                     failed_downloads_info.append(download_args)
                 elif result == "SKIPPED":
                     skipped_count += 1
             
             # ----------------- 2. 下载实况视频 (Live Photo) -----------------
-            # 使用上面定义好的 meta_dict 来获取 live_url
             live_photo_url = meta_dict.get('live_url')
             if live_photo_url:
-                # 【核心修改点】
-                # 先构建文件名，检查文件是否存在。
-                # 只有文件不存在时，才打印日志并调用下载器。
+                # 实况视频作为一个额外项目，不算在基础skipped_count的total里，除非我们想更精细
                 video_filename = f"{date_str}_{id_str}_{index + 1}.mp4"
                 video_filepath = os.path.join(user_folder, video_filename)
 
@@ -133,17 +134,17 @@ class PostHandler:
                     
                     v_result = self.downloader.download_image(**video_args)
                     if v_result == "SUCCESS":
-                        successful_downloads += 1
+                        successful_videos += 1
                     elif v_result == "FAILED":
                         failed_downloads_info.append(video_args)
-                # else: 
-                #   如果文件已存在，这里什么都不做（静默跳过），这样就不会打印那行误导人的日志了。
         
-        if skipped_count > 0 and skipped_count == total_images_to_process:
+        if skipped_count > 0 and skipped_count >= total_items_to_process:
+             # 注意：这里只打印了图片的跳过信息，视频通常伴随图片存在
             print(f"  - 所有 {skipped_count} 张图片均已存在，全部跳过。")
         elif skipped_count > 0:
             print(f"  - 跳过 {skipped_count} 张已存在的图片。")
 
         self.extractor.create_content_json_from_local_meta(user_folder, date_str, id_str)
 
-        return True, successful_downloads, failed_downloads_info
+        # 返回图片和视频的独立计数
+        return True, successful_images, successful_videos, failed_downloads_info

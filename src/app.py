@@ -5,7 +5,7 @@ import sys
 import time
 import datetime
 import json
-import re  # 导入正则表达式模块
+import re
 from dataclasses import dataclass, asdict
 
 class Tee:
@@ -15,21 +15,15 @@ class Tee:
     """
     def __init__(self, *files):
         self.files = files
-        # 用于匹配并移除ANSI颜色代码的正则表达式
         self.ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
 
     def write(self, obj):
-        # 为写入文件准备一份去除了颜色代码的纯文本版本
         plain_text = self.ansi_escape.sub('', obj)
-        
         for f in self.files:
             try:
-                # 判断输出流是否为终端（控制台）
                 if hasattr(f, 'isatty') and f.isatty():
-                    # 如果是控制台，写入原始带颜色的文本
                     f.write(obj)
                 else:
-                    # 如果是文件，写入处理过的纯文本
                     f.write(plain_text)
                 f.flush()
             except Exception:
@@ -52,6 +46,7 @@ class LogEntry:
     duration_seconds: float
     processed_posts: int
     downloaded_images: int
+    downloaded_videos: int  # 【新增】视频下载统计
     failed_images: int
 
 from config import Config
@@ -91,8 +86,17 @@ class Application:
         """
         启动下载器的主入口点。
         """
-        timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-        console_log_path = os.path.join(self.log_dir, f"run_log_{timestamp}.log")
+        # 获取当前时间对象，方便后续复用
+        now = datetime.datetime.now()
+        timestamp = now.strftime('%Y-%m-%d_%H-%M-%S')
+        
+        # 【修改 1】按月份创建子文件夹，例如 log/2025-12/
+        month_str = now.strftime('%Y-%m')
+        daily_log_dir = os.path.join(self.log_dir, month_str)
+        os.makedirs(daily_log_dir, exist_ok=True) # 确保子文件夹存在
+        
+        # 【修改 2】日志路径指向子文件夹
+        console_log_path = os.path.join(daily_log_dir, f"run_log_{timestamp}.log")
         
         original_stdout = sys.stdout
         log_file = open(console_log_path, 'w', encoding='utf-8')
@@ -127,11 +131,13 @@ class Application:
                 hours, minutes = divmod(minutes, 60)
                 time_str = f"{int(hours)}h {int(minutes)}m {seconds:.2f}s"
                 
+                # 【修改】更新控制台输出，增加视频统计
                 console_message = (
                     f"\n>>>>>>>>> 完成用户 '{user_name}' 的处理，总耗时: {time_str} <<<<<<<<<\n"
                     f"  - 本次处理动态数: {stats['processed_posts']}\n"
                     f"  - 成功下载图片数: {stats['downloaded_images']}\n"
-                    f"  - 下载失败图片数: {stats['failed_images']}\n"
+                    f"  - 成功下载实况图片(live photo)数: {stats.get('downloaded_videos', 0)}\n"
+                    f"  - 下载失败项目数: {stats['failed_images']}\n"
                     f">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>"
                 )
                 print(console_message)
@@ -144,6 +150,7 @@ class Application:
                     duration_seconds=round(duration, 2),
                     processed_posts=stats['processed_posts'],
                     downloaded_images=stats['downloaded_images'],
+                    downloaded_videos=stats.get('downloaded_videos', 0), # 【新增】
                     failed_images=stats['failed_images']
                 )
 

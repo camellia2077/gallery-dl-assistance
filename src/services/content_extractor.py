@@ -1,4 +1,4 @@
-# src/processor/content_extractor.py
+# src/services/content_extractor.py
 
 import os
 import json
@@ -17,6 +17,8 @@ class ContentExtractor:
         此方法确保了所有数据提取操作都基于本地文件，方便调试。
         """
         step2_metadata_filename = f"{date_str}_{id_str}.json"
+        # 构造相对路径用于显示
+        step2_relative_path = os.path.join('metadata', 'step2', step2_metadata_filename)
         step2_metadata_path = os.path.join(user_folder, 'metadata', 'step2', step2_metadata_filename)
         
         final_content_filename = f"{date_str}_{id_str}.json"
@@ -24,7 +26,8 @@ class ContentExtractor:
 
         # 步骤1: 检查本地的 step2 元数据文件是否存在
         if not os.path.exists(step2_metadata_path):
-            print(f"  - 错误：无法找到用于提取内容的源元数据文件: {step2_metadata_filename}")
+            # 只有出错时才打印完整文件名，避免刷屏
+            # print(f"  - 错误：无法找到用于提取内容的源元数据文件: {step2_metadata_filename}")
             return
 
         # 步骤2: 读取并解析 step2 元数据文件
@@ -34,8 +37,10 @@ class ContentExtractor:
         except (json.JSONDecodeError, Exception) as e:
             print(f"  - 错误：读取或解析源元数据文件 {step2_metadata_filename} 失败: {e}")
             return
-            
-        print(f"  - 正在从本地元数据 '{step2_metadata_filename}' 中提取内容...")
+        
+        # 【修改日志 1】明确这是原始元数据，且加上相对路径前缀
+        # print(f"  - 正在从本地元数据 '{step2_metadata_filename}' 中提取内容...") 
+        print(f"  - [提取] 读取原始元数据: {step2_relative_path}")
 
         # 步骤3: 从加载的数据中提取所有字段
         try:
@@ -110,7 +115,9 @@ class ContentExtractor:
             }
 
             # 步骤5: 写入最终的内容JSON文件
-            print(f"  - 正在创建最终内容JSON文件: {final_content_filename}")
+            # 【修改日志 2】明确这是生成的最终文件
+            print(f"  - [生成] 写入内容信息文件: {final_content_filename}")
+            
             with open(final_content_filepath, 'w', encoding='utf-8') as f:
                 json.dump(data_to_save, f, ensure_ascii=False, indent=4)
 
